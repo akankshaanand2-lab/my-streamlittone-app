@@ -25,11 +25,9 @@ Provide:
 2. **Cultural Nuances & Adjustments**: 2-3 brief bullet points explaining key changes made to suit UAE business etiquette.
 """
 
+# Visible Version Badge to prove the new code is live
 st.title("🇦🇪 Dubai Tone Coach")
-st.markdown(
-    "Transform blunt or rushed drafts into warm, relationship-first, and culturally "
-    "polished business communication tailored for the UAE corporate landscape."
-)
+st.caption("🟢 App Version 2.0 (Live)")
 
 with st.sidebar:
     st.header("Settings")
@@ -38,30 +36,16 @@ with st.sidebar:
         "Gemini API Key",
         type="password",
         value=saved_key,
-        help="Paste your AQ... or AIza... key here."
+        help="Paste your AQ... key here"
     )
 
 rough_message = st.text_area(
     "Paste your rough draft or draft message:",
     height=180,
-    placeholder="e.g., Need the financial breakdown right now. If it's not sent by 3 PM the meeting is canceled."
+    placeholder="e.g., hello habibi"
 )
 
 submit_button = st.button("✨ Polish Tone", type="primary")
-
-def get_available_model(api_key):
-    """Finds the actual model assigned to this account."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    res = requests.get(url, timeout=10)
-    if res.status_code == 200:
-        models = [m["name"] for m in res.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        # Prefer flash/pro models
-        for m in models:
-            if "flash" in m or "pro" in m:
-                return m
-        if models:
-            return models[0]
-    return "models/gemini-1.5-flash-latest"
 
 if submit_button:
     api_key = api_key_input.strip()
@@ -69,34 +53,32 @@ if submit_button:
     if not api_key:
         st.error("Please enter your Gemini API key in the sidebar.")
     elif not rough_message.strip():
-        st.warning("Please provide a draft message to rewrite.")
+        st.warning("Please enter a message.")
     else:
         try:
-            with st.spinner("Polishing tone for UAE corporate etiquette..."):
-                active_model = get_available_model(api_key)
-                
-                url = f"https://generativelanguage.googleapis.com/v1beta/{active_model}:generateContent?key={api_key}"
+            with st.spinner("Polishing tone for Dubai business etiquette..."):
+                # Use standard production Gemini 1.5 Flash
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
                 
                 payload = {
                     "contents": [{
                         "parts": [{
-                            "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft to rewrite:\n{rough_message}"
+                            "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\nDraft:\n{rough_message}"
                         }]
                     }],
                     "generationConfig": {"temperature": 0.4}
                 }
 
-                response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
-                result = response.json()
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
+                result = res.json()
 
-                if response.status_code == 200:
-                    rewritten_text = result["candidates"][0]["content"]["parts"][0]["text"]
+                if res.status_code == 200:
+                    text = result["candidates"][0]["content"]["parts"][0]["text"]
                     st.success("Draft polished successfully!")
                     st.markdown("### Result")
-                    st.markdown(rewritten_text)
+                    st.markdown(text)
                 else:
-                    error_msg = result.get("error", {}).get("message", response.text)
-                    st.error(f"Google API Error ({response.status_code}): {error_msg}")
+                    st.error(f"Error ({res.status_code}): {result.get('error', {}).get('message', res.text)}")
 
         except Exception as e:
             st.error(f"Error: {e}")
