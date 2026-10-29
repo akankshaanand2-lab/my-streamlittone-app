@@ -25,9 +25,8 @@ Provide:
 2. **Cultural Nuances & Adjustments**: 2-3 brief bullet points explaining key changes made to suit UAE business etiquette.
 """
 
-# Visible Version Badge to prove the new code is live
 st.title("🇦🇪 Dubai Tone Coach")
-st.caption("🟢 App Version 2.0 (Live)")
+st.caption("🟢 App Version 2.1 (Auto-Detect Model)")
 
 with st.sidebar:
     st.header("Settings")
@@ -47,6 +46,25 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
+def find_active_model(api_key):
+    """Finds the actual model Google has enabled for this key."""
+    for ver in ["v1beta", "v1"]:
+        try:
+            r = requests.get(f"https://generativelanguage.googleapis.com/{ver}/models?key={api_key}", timeout=10)
+            if r.status_code == 200:
+                models = [
+                    m["name"] for m in r.json().get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                if models:
+                    # Prefer flash models, otherwise first available
+                    flash_models = [m for m in models if "flash" in m]
+                    chosen = flash_models[0] if flash_models else models[0]
+                    return ver, chosen
+        except Exception:
+            continue
+    return None, None
+
 if submit_button:
     api_key = api_key_input.strip()
 
@@ -56,29 +74,35 @@ if submit_button:
         st.warning("Please enter a message.")
     else:
         try:
-            with st.spinner("Polishing tone for Dubai business etiquette..."):
-                # Use standard production Gemini 1.5 Flash
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-                
-                payload = {
-                    "contents": [{
-                        "parts": [{
-                            "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\nDraft:\n{rough_message}"
-                        }]
-                    }],
-                    "generationConfig": {"temperature": 0.4}
-                }
+            with st.spinner("Finding your account's active model & polishing tone..."):
+                ver, model_path = find_active_model(api_key)
 
-                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
-                result = res.json()
-
-                if res.status_code == 200:
-                    text = result["candidates"][0]["content"]["parts"][0]["text"]
-                    st.success("Draft polished successfully!")
-                    st.markdown("### Result")
-                    st.markdown(text)
+                if not model_path:
+                    st.error("No active text models found for this API key. Make sure the Generative Language API is enabled in your Google Cloud console.")
                 else:
-                    st.error(f"Error ({res.status_code}): {result.get('error', {}).get('message', res.text)}")
+                    # Use the model that Google verified exists
+                    url = f"https://generativelanguage.googleapis.com/{ver}/{model_path}:generateContent?key={api_key}"
+                    
+                    payload = {
+                        "contents": [{
+                            "parts": [{
+                                "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\nDraft:\n{rough_message}"
+                            }]
+                        }],
+                        "generationConfig": {"temperature": 0.4}
+                    }
+
+                    res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=25)
+                    result = res.json()
+
+                    if res.status_code == 200:
+                        text = result["candidates"][0]["content"]["parts"][0]["text"]
+                        model_name = model_path.replace("models/", "")
+                        st.success(f"Polished using active model: `{model_name}`")
+                        st.markdown("### Result")
+                        st.markdown(text)
+                    else:
+                        st.error(f"Error ({res.status_code}): {result.get('error', {}).get('message', res.text)}")
 
         except Exception as e:
             st.error(f"Error: {e}")
