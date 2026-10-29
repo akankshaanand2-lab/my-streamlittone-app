@@ -5,7 +5,7 @@ from google.genai import types
 
 # Page configuration
 st.set_page_config(
-    page_title="Dubai Tone Coach",
+    page_title="UAE Tone Coach",
     page_icon="🇦🇪",
     layout="centered"
 )
@@ -29,7 +29,7 @@ Provide:
 """
 
 # App Header
-st.title("🇦🇪 Dubai Tone Coach")
+st.title("UAE Tone Coach")
 st.markdown(
     "Transform blunt or rushed drafts into warm, relationship-first, and culturally "
     "polished business communication tailored for the UAE corporate landscape."
