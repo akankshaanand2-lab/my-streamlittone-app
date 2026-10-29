@@ -34,7 +34,7 @@ st.markdown(
     "polished business communication tailored for the UAE corporate landscape."
 )
 
-# Sidebar: API Key Configuration
+# Sidebar: Settings
 with st.sidebar:
     st.header("Settings")
     saved_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
@@ -44,6 +44,14 @@ with st.sidebar:
         value=saved_key,
         help="Paste your AQ... or AIza... key here."
     )
+    
+    # Model selection (defaulted to the requested gemini-3.8-flash)
+    selected_model = st.selectbox(
+        "Model Version",
+        options=["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"],
+        index=0
+    )
+    
     st.markdown("---")
     st.markdown(
         "**Why UAE Tone Matters:**\n"
@@ -61,35 +69,6 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
-def get_best_available_model(api_key):
-    """Queries the user's available models and selects the best active Gemini model."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    res = requests.get(url)
-    if res.status_code != 200:
-        return None
-    
-    models = res.json().get("models", [])
-    supported = [
-        m["name"] for m in models 
-        if "generateContent" in m.get("supportedGenerationMethods", [])
-    ]
-    
-    # Preferred order of models
-    preferences = [
-        "models/gemini-2.0-flash",
-        "models/gemini-1.5-flash",
-        "models/gemini-1.5-flash-latest",
-        "models/gemini-1.5-pro",
-        "models/gemini-pro"
-    ]
-    
-    for pref in preferences:
-        if pref in supported:
-            return pref
-            
-    # Fallback to the first supported model found
-    return supported[0] if supported else None
-
 # Generation logic
 if submit_button:
     api_key = api_key_input.strip()
@@ -100,14 +79,9 @@ if submit_button:
         st.warning("Please provide a draft message to rewrite.")
     else:
         try:
-            with st.spinner("Finding available model & refining tone..."):
-                # 1. Automatically detect model
-                model_name = get_best_available_model(api_key)
-                if not model_name:
-                    model_name = "models/gemini-2.0-flash"  # fallback
-
-                # 2. Call the active model
-                generate_url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+            with st.spinner(f"Refining tone using {selected_model}..."):
+                # Call Gemini API directly using the model Google requested
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model}:generateContent?key={api_key}"
 
                 prompt_content = f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft message to rewrite:\n{rough_message}"
 
@@ -123,7 +97,7 @@ if submit_button:
                 }
 
                 response = requests.post(
-                    generate_url,
+                    url,
                     headers={"Content-Type": "application/json"},
                     json=payload
                 )
@@ -132,7 +106,7 @@ if submit_button:
 
                 if response.status_code == 200:
                     rewritten_text = result["candidates"][0]["content"]["parts"][0]["text"]
-                    st.success(f"Draft polished using `{model_name.replace('models/', '')}`!")
+                    st.success("Draft polished successfully!")
                     st.markdown("### Result")
                     st.markdown(rewritten_text)
                 else:
