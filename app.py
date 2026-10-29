@@ -4,12 +4,11 @@ import streamlit as st
 
 # Page configuration
 st.set_page_config(
-    page_title="UAE Tone Coach",
+    page_title="Dubai Tone Coach",
     page_icon="🇦🇪",
     layout="centered"
 )
 
-# Custom system instructions tailored for UAE business etiquette
 EMIRATI_BUSINESS_SYSTEM_INSTRUCTION = """
 You are an expert executive communications coach specializing in UAE and Gulf (GCC) corporate culture.
 Your task is to rewrite raw, informal, blunt, or poorly phrased business drafts into warm, respectful, culturally polished Emirati business communication.
@@ -27,14 +26,13 @@ Provide:
 2. **Cultural Nuances & Adjustments**: 2-3 brief bullet points explaining key changes made to suit UAE business etiquette.
 """
 
-# App Header
-st.title("UAE Tone Coach")
+st.title("🇦🇪 Dubai Tone Coach")
 st.markdown(
     "Transform blunt or rushed drafts into warm, relationship-first, and culturally "
     "polished business communication tailored for the UAE corporate landscape."
 )
 
-# Sidebar: Settings
+# Sidebar
 with st.sidebar:
     st.header("Settings")
     saved_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
@@ -45,22 +43,13 @@ with st.sidebar:
         help="Paste your AQ... or AIza... key here."
     )
     
-    # Model selection (defaulted to the requested gemini-3.8-flash)
     selected_model = st.selectbox(
-        "Model Version",
-        options=["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"],
+        "Model",
+        options=["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
         index=0
     )
-    
-    st.markdown("---")
-    st.markdown(
-        "**Why UAE Tone Matters:**\n"
-        "- Cultivates trust & goodwill\n"
-        "- Respects relationship-first culture\n"
-        "- Strikes the right balance between executive clarity and diplomatic warmth"
-    )
 
-# Main input form
+# Main input
 rough_message = st.text_area(
     "Paste your rough draft or draft message:",
     height=180,
@@ -69,38 +58,41 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
-# Generation logic
+def call_gemini(model, text, api_key):
+    """Sends request to Google Gemini with a 15-second timeout."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft message to rewrite:\n{text}"}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.4
+        }
+    }
+    # 15 second timeout prevents endless loading
+    return requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=15)
+
 if submit_button:
     api_key = api_key_input.strip()
 
     if not api_key:
-        st.error("Please enter your Gemini API key in the sidebar.")
+        st.error("Please expand the sidebar (click the >> in the top left) and enter your Gemini API key.")
     elif not rough_message.strip():
         st.warning("Please provide a draft message to rewrite.")
     else:
         try:
-            with st.spinner(f"Refining tone using {selected_model}..."):
-                # Call Gemini API directly using the model Google requested
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model}:generateContent?key={api_key}"
-
-                prompt_content = f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft message to rewrite:\n{rough_message}"
-
-                payload = {
-                    "contents": [
-                        {
-                            "parts": [{"text": prompt_content}]
-                        }
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.4
-                    }
-                }
-
-                response = requests.post(
-                    url,
-                    headers={"Content-Type": "application/json"},
-                    json=payload
-                )
+            with st.spinner(f"Polishing tone with {selected_model}..."):
+                # Try the selected model first
+                response = call_gemini(selected_model, rough_message, api_key)
+                
+                # If 404, automatically try the fallback model
+                if response.status_code == 404 and selected_model != "gemini-1.5-flash":
+                    st.info(f"{selected_model} was not found, trying gemini-1.5-flash...")
+                    response = call_gemini("gemini-1.5-flash", rough_message, api_key)
 
                 result = response.json()
 
@@ -113,5 +105,7 @@ if submit_button:
                     error_msg = result.get("error", {}).get("message", response.text)
                     st.error(f"Google API Error ({response.status_code}): {error_msg}")
 
+        except requests.exceptions.Timeout:
+            st.error("Request timed out. Google's servers took too long to respond. Please try again.")
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
