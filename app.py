@@ -42,12 +42,6 @@ with st.sidebar:
         value=saved_key,
         help="Paste your AQ... or AIza... key here."
     )
-    
-    selected_model = st.selectbox(
-        "Model",
-        options=["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
-        index=0
-    )
 
 # Main input
 rough_message = st.text_area(
@@ -58,54 +52,88 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
-def call_gemini(model, text, api_key):
-    """Sends request to Google Gemini with a 15-second timeout."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft message to rewrite:\n{text}"}
+def find_working_model_and_api(api_key):
+    """Queries Google ListModels across v1 and v1beta to discover available models."""
+    for api_version in ["v1", "v1beta"]:
+        url = f"https://generativelanguage.googleapis.com/{api_version}/models?key={api_key}"
+        try:
+            res = requests.get(url, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                models = data.get("models", [])
+                
+                # Filter models that support content generation
+                supported = [
+                    m["name"] for m in models 
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
                 ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.4
-        }
-    }
-    # 15 second timeout prevents endless loading
-    return requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=15)
+                
+                if supported:
+                    # Preferred models in priority order
+                    for pref in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]:
+                        for model_path in supported:
+                            if pref in model_path:
+                                return api_version, model_path
+                    
+                    # Return the first supported model if preferred not found
+                    return api_version, supported[0]
+        except Exception:
+            continue
+            
+    return None, None
 
 if submit_button:
     api_key = api_key_input.strip()
 
     if not api_key:
-        st.error("Please expand the sidebar (click the >> in the top left) and enter your Gemini API key.")
+        st.error("Please expand the sidebar (click >> on top-left) and enter your Gemini API key.")
     elif not rough_message.strip():
-        st.warning("Please provide a draft message to rewrite.")
+        st.warning("Please provide a message or email draft to rewrite.")
     else:
         try:
-            with st.spinner(f"Polishing tone with {selected_model}..."):
-                # Try the selected model first
-                response = call_gemini(selected_model, rough_message, api_key)
-                
-                # If 404, automatically try the fallback model
-                if response.status_code == 404 and selected_model != "gemini-1.5-flash":
-                    st.info(f"{selected_model} was not found, trying gemini-1.5-flash...")
-                    response = call_gemini("gemini-1.5-flash", rough_message, api_key)
+            with st.spinner("Connecting to Google and discovering available models..."):
+                api_version, model_path = find_working_model_and_api(api_key)
 
-                result = response.json()
-
-                if response.status_code == 200:
-                    rewritten_text = result["candidates"][0]["content"]["parts"][0]["text"]
-                    st.success("Draft polished successfully!")
-                    st.markdown("### Result")
-                    st.markdown(rewritten_text)
+                if not model_path:
+                    st.error(
+                        "No text-generation models found for this API key. "
+                        "Please verify that the **Generative Language API** is enabled in your Google Cloud project."
+                    )
                 else:
-                    error_msg = result.get("error", {}).get("message", response.text)
-                    st.error(f"Google API Error ({response.status_code}): {error_msg}")
+                    # Call generateContent on the discovered working model
+                    generate_url = f"https://generativelanguage.googleapis.com/{api_version}/{model_path}:generateContent?key={api_key}"
+                    
+                    prompt = f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft to rewrite:\n{rough_message}"
+                    payload = {
+                        "contents": [
+                            {"parts": [{"text": prompt}]}
+                        ],
+                        "generationConfig": {
+                            "temperature": 0.4
+                        }
+                    }
+
+                    response = requests.post(
+                        generate_url,
+                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        timeout=20
+                    )
+
+                    result = response.json()
+
+                    if response.status_code == 200:
+                        clean_name = model_path.replace("models/", "")
+                        rewritten_text = result["candidates"][0]["content"]["parts"][0]["text"]
+                        
+                        st.success(f"Polished using active model: `{clean_name}` ({api_version})")
+                        st.markdown("### Result")
+                        st.markdown(rewritten_text)
+                    else:
+                        error_msg = result.get("error", {}).get("message", response.text)
+                        st.error(f"Google API Error ({response.status_code}): {error_msg}")
 
         except requests.exceptions.Timeout:
-            st.error("Request timed out. Google's servers took too long to respond. Please try again.")
+            st.error("The request timed out. Please try again.")
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
