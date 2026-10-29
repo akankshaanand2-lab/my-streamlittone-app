@@ -26,7 +26,7 @@ Provide:
 """
 
 st.title("🇦🇪 Dubai Tone Coach")
-st.caption("🟢 App Version 2.1 (Auto-Detect Model)")
+st.caption("🟢 App Version 2.2 (Multi-Model Resolver)")
 
 with st.sidebar:
     st.header("Settings")
@@ -46,24 +46,24 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
-def find_active_model(api_key):
-    """Finds the actual model Google has enabled for this key."""
-    for ver in ["v1beta", "v1"]:
-        try:
-            r = requests.get(f"https://generativelanguage.googleapis.com/{ver}/models?key={api_key}", timeout=10)
-            if r.status_code == 200:
-                models = [
-                    m["name"] for m in r.json().get("models", [])
-                    if "generateContent" in m.get("supportedGenerationMethods", [])
-                ]
-                if models:
-                    # Prefer flash models, otherwise first available
-                    flash_models = [m for m in models if "flash" in m]
-                    chosen = flash_models[0] if flash_models else models[0]
-                    return ver, chosen
-        except Exception:
-            continue
-    return None, None
+def get_candidate_models(api_key):
+    """Gathers candidate models from Google, strictly excluding deprecated 2.5-flash."""
+    candidates = ["models/gemini-3.8-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash-latest"]
+    try:
+        r = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}", timeout=10)
+        if r.status_code == 200:
+            found = [
+                m["name"] for m in r.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            ]
+            # Exclude the deprecated 2.5-flash
+            valid = [m for m in found if "2.5-flash" not in m]
+            for m in valid:
+                if m not in candidates:
+                    candidates.append(m)
+    except Exception:
+        pass
+    return candidates
 
 if submit_button:
     api_key = api_key_input.strip()
@@ -74,35 +74,42 @@ if submit_button:
         st.warning("Please enter a message.")
     else:
         try:
-            with st.spinner("Finding your account's active model & polishing tone..."):
-                ver, model_path = find_active_model(api_key)
+            with st.spinner("Finding active model and generating polished tone..."):
+                candidates = get_candidate_models(api_key)
+                
+                payload = {
+                    "contents": [{
+                        "parts": [{
+                            "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\nDraft:\n{rough_message}"
+                        }]
+                    }],
+                    "generationConfig": {"temperature": 0.4}
+                }
 
-                if not model_path:
-                    st.error("No active text models found for this API key. Make sure the Generative Language API is enabled in your Google Cloud console.")
-                else:
-                    # Use the model that Google verified exists
-                    url = f"https://generativelanguage.googleapis.com/{ver}/{model_path}:generateContent?key={api_key}"
-                    
-                    payload = {
-                        "contents": [{
-                            "parts": [{
-                                "text": f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\nDraft:\n{rough_message}"
-                            }]
-                        }],
-                        "generationConfig": {"temperature": 0.4}
-                    }
+                success = False
+                last_error = ""
 
-                    res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=25)
-                    result = res.json()
+                # Try models in order until one succeeds
+                for model in candidates:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={api_key}"
+                    try:
+                        res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=15)
+                        if res.status_code == 200:
+                            result = res.json()
+                            text = result["candidates"][0]["content"]["parts"][0]["text"]
+                            clean_model = model.replace("models/", "")
+                            st.success(f"Polished using active model: `{clean_model}`")
+                            st.markdown("### Result")
+                            st.markdown(text)
+                            success = True
+                            break
+                        else:
+                            last_error = f"{model} -> {res.text}"
+                    except Exception:
+                        continue
 
-                    if res.status_code == 200:
-                        text = result["candidates"][0]["content"]["parts"][0]["text"]
-                        model_name = model_path.replace("models/", "")
-                        st.success(f"Polished using active model: `{model_name}`")
-                        st.markdown("### Result")
-                        st.markdown(text)
-                    else:
-                        st.error(f"Error ({res.status_code}): {result.get('error', {}).get('message', res.text)}")
+                if not success:
+                    st.error(f"Could not connect to an active model. Last error: {last_error}")
 
         except Exception as e:
             st.error(f"Error: {e}")
