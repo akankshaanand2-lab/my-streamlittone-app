@@ -37,13 +37,12 @@ st.markdown(
 # Sidebar: API Key Configuration
 with st.sidebar:
     st.header("Settings")
-    # Check secrets or environment variable first
     saved_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
     api_key_input = st.text_input(
         "Gemini API Key",
         type="password",
         value=saved_key,
-        help="Paste your AQ... or AIza... Gemini key here."
+        help="Paste your AQ... or AIza... key here."
     )
     st.markdown("---")
     st.markdown(
@@ -62,6 +61,35 @@ rough_message = st.text_area(
 
 submit_button = st.button("✨ Polish Tone", type="primary")
 
+def get_best_available_model(api_key):
+    """Queries the user's available models and selects the best active Gemini model."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    res = requests.get(url)
+    if res.status_code != 200:
+        return None
+    
+    models = res.json().get("models", [])
+    supported = [
+        m["name"] for m in models 
+        if "generateContent" in m.get("supportedGenerationMethods", [])
+    ]
+    
+    # Preferred order of models
+    preferences = [
+        "models/gemini-2.0-flash",
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-pro",
+        "models/gemini-pro"
+    ]
+    
+    for pref in preferences:
+        if pref in supported:
+            return pref
+            
+    # Fallback to the first supported model found
+    return supported[0] if supported else None
+
 # Generation logic
 if submit_button:
     api_key = api_key_input.strip()
@@ -72,33 +100,39 @@ if submit_button:
         st.warning("Please provide a draft message to rewrite.")
     else:
         try:
-            with st.spinner("Refining tone for UAE business etiquette..."):
-                # Call Gemini API directly (handles both AQ... and AIza... keys)
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-                
+            with st.spinner("Finding available model & refining tone..."):
+                # 1. Automatically detect model
+                model_name = get_best_available_model(api_key)
+                if not model_name:
+                    model_name = "models/gemini-2.0-flash"  # fallback
+
+                # 2. Call the active model
+                generate_url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+
+                prompt_content = f"{EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}\n\n---\nDraft message to rewrite:\n{rough_message}"
+
                 payload = {
                     "contents": [
-                        {"parts": [{"text": rough_message}]}
+                        {
+                            "parts": [{"text": prompt_content}]
+                        }
                     ],
-                    "systemInstruction": {
-                        "parts": [{"text": EMIRATI_BUSINESS_SYSTEM_INSTRUCTION}]
-                    },
                     "generationConfig": {
                         "temperature": 0.4
                     }
                 }
 
                 response = requests.post(
-                    url,
+                    generate_url,
                     headers={"Content-Type": "application/json"},
                     json=payload
                 )
-                
+
                 result = response.json()
 
                 if response.status_code == 200:
                     rewritten_text = result["candidates"][0]["content"]["parts"][0]["text"]
-                    st.success("Draft polished successfully!")
+                    st.success(f"Draft polished using `{model_name.replace('models/', '')}`!")
                     st.markdown("### Result")
                     st.markdown(rewritten_text)
                 else:
